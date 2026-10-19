@@ -1,0 +1,16 @@
+# 这个仓库的文本文件必须是 LF。
+#
+# 不是洁癖：gates/guard-format.mjs 会**直接失败**于 .yml/.js/.json 里的 CRLF
+# （YAML 与脚本在 Windows 上加 CRLF 后仍能解析，但"能被解析"不等于"行为一致"，
+# 而模式自己把"统一 LF"写成了门禁规则）。没有这一行，在 Windows 上 clone 下来
+# 的第一件事就是格式守卫报错。详见 README「已知边界」。
+* text=auto eol=lf
+
+# 明确几个必须原样保留的
+*.mjs   text eol=lf
+*.cjs   text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.md    text eol=lf
+*.json  text eol=lf
+MANIFEST.sha256 text eol=lf

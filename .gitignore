@@ -1,0 +1,20 @@
+# 交付记录（含本机路径与验收证据），不上仓库
+交付说明.md
+
+# 运行时产物
+node_modules/
+.plugin-creator/
+*.log
+*.tmp
+
+# 安装器/手工改动留下的备份
+*.bak
+*.bak-*
+*.tmp-*
+cordis.patch.yml.bak-*
+
+# 系统与编辑器
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

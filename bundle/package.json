@@ -1,0 +1,12 @@
+{
+  "name": "@local/dsh-plugin-creator-mode",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "把「插件创造模式」作为一个声明式 agent preset 行插入当前 Profile 的配置型 bundle。",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

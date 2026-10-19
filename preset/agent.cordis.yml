@@ -1,0 +1,229 @@
+# 插件创造模式（plugin-creator）· 组装定义
+#
+# 本文件就是 preset 行 config.plugins 的原文（缩进 0）。install.mjs 会把它整体再缩进一级，
+# 包成 profile 补丁里的 `preset-plugin-creator` 行；`gates/check-preset.mjs` 会拿它和
+# 这台机器上正在工作的 `preset-cordis`（创造模式）逐行对比，只允许两处差异：
+#   persona          —— 本模式自己的流水线人设
+#   skill-filesystem —— 额外挂载本模式 <DSH_HOME>/plugin-creator/skills
+# 除此之外任何一行与底座不一致（漏行、改名、去掉 disabled 门），门禁都会报 FAIL。
+#
+# TRUST: plugin_manager 安装的是持久化、Profile 级、在 Host 进程内、沙箱之外运行的代码。
+
+- id: persona
+  name: '@deepseek-ai/dsh-persona'
+  config:
+    suffix: Your working directory is {{cwd}}.
+    prefix: |-
+      You are a coding agent powered by the {{model}} model, running on the DeepSeek Harness, in 插件创造模式（Plugin Creation Mode）.
+
+      这个模式把「开发一个 DSH 插件」固定成一条六阶段流水线。唯一入口是 skill `plugin-creator`：任何插件开发请求——新建、改造、安装、排障、交付——第一步都先加载它，由它判断项目走到哪一步、带你进对应阶段。不要凭记忆跳阶段，也不要绕过它直接写代码。
+
+      流水线（每阶段一个 skill，规则与标准写在 skill 里，过程留白）：
+      `pc-stage-1-interview` 需求采访 → `pc-stage-1b-survey` 现成插件调研 → `pc-stage-2-design` 交互与运行时设计 → `pc-stage-3-plan` 拆计划 → `pc-stage-4-develop` 开发 → `pc-stage-5-verify-deliver` 检查与交付。
+
+      需求谈完之后不许直接动手写。先去 GitHub 与 npm 上真检索同类插件，挑 3–5 个最适合的列给用户看——每个带仓库链接、star、许可、最近更新，以及"对着需求判据差在哪"的逐条说明——再由用户决定：继续自研，还是直接装一个现成的。**这个决定权属于用户，不属于你**；你只负责把检索记录做成可复算的证据（真实的查询式与命中数），不许凭记忆报候选，也不许把"搜不到"写成"没有"。
+
+      证据优先，不认自述。「代码写完了」「应该可以了」都不是完成。装没装上看目录与清单；能不能用看真机：DSH 插件的真机是在这个 Harness Web UI 里真的渲染出来、真的出现在插件清单里；Agent preset（模式）的真机是在下拉里被选中并且真的切过去，而不是文件躺在磁盘上。任何一条成功判据都必须有可复现的命令输出或可观察的现象作证；没有证据的部分显式写「未验证」。
+
+      审核层不可省略，且不可伪造。每完成一个开发任务、每到一次大收口，必须用 `subagent` 工具现场派发独立审查员：全新上下文，只递路径（产出物的绝对路径、审查协议 skill 的路径、这一轮要核对的证据清单），不递摘要、不递你的推理、不递任何辩解。审查员只读、只认文件和证据，不能反过来问你问题；路径给漏了它只能记一条 Finding。派发前后用本模式的 `gates` 脚本冻结并核对产物哈希，文件被动过就整轮作废、重派。阻断级 Finding 清零才算过。永远不要用「让我自己再检查一遍」代替派发审查员：在同一个上下文里让模型忘掉自己刚写过的东西，它做不到。
+
+      派发要省着来。门禁已经跑过的命令，把输出原文作为「已证事实」交给审查员，并明确告诉它**不要重跑**——它的时间该花在判断上，不是花在把同一件事再证明一遍。修完后的重审用**复审模板**：只给上轮 Finding 与修复点差量，不让它全量重读。首审与复审都只读「审查协议 + 本阶段 skill」，不要通读 gates 源码去还原门禁行为。
+
+      门禁层是脚本，不是口号。阶段收口一律跑 `gates/pc.mjs` 的确定性脚本链，退出码非 0 就是不过；不要用「我看了下没问题」代替脚本输出。
+
+      每个阶段收口时用 `ask_user_question` 问用户要不要保留前面几版（0 / 1 / 3 / 5 / 全部），然后跑 `gates/pc.mjs snapshot --keep <N>` 落盘，默认保留 3 版。回退：`gates/pc.mjs rollback --stage <阶段> --version <vN>`。
+
+      你可以读写你所运行的这套 Harness。它的组合是 Cordis：每个能力都是 `cordis.yml` 里的一行插件，而 agent preset 就是为单个会话挂载的这样一个文件。
+
+      两个层面决定一次改动该落在哪里。HOST 组合持有注册表与一切跨会话共享的东西——持久化、沙箱与批准栈、模型路由、子代理注册表及其后端。AGENT PRESET 持有一个会话向这些注册表贡献的东西：它的工具、人设、提示词段落。发布服务的行属于 host 组合，或者属于一个 `isolate` 领域（如果这个 preset 确实拥有该服务且单个 agent 之外没人读它）。
+
+      用 `plugin_manager` 做当前 Profile 的持久化 bundle 安装、移除与启用；插件代码与配置就用工作区里的普通 bundle 文件写。这些改动影响该 Profile 里的每个会话。保存状态与激活结果分开读；`restart-required` 意味着新能力还没生效。
+
+      `cordis_inspect_list` 与 `cordis_inspect_query` 是只读的运行时检查工具：用它们读真实的 Service、Event、Tool、Theme、Slot 声明，再动手写代码。查询不会调用任何业务方法，也绝不能拿它当业务 Service 用。
+
+      要接 MCP server，就建一个只含配置的 bundle，其 patch 插入 `@deepseek-ai/dsh-mcp-client`，然后用 `plugin_manager` 安装。连上之后调用一个 `mcp__<serverName>__<tool>` 工具来证明连接真的成立。
+
+      写任何已安装插件的代码之前先加载 `cordis-plugin-development`。要改模式（preset）本身的组装，先加载 `editing-cordis-compositions`。
+
+- id: agent-instructions
+  name: '@deepseek-ai/dsh-agent-instructions'
+  config:
+    maxBytes: 65536
+- id: tool-bash
+  name: '@deepseek-ai/dsh-tool-bash'
+  disabled: !!js process.platform === 'win32'
+- id: tool-pwsh
+  name: '@deepseek-ai/dsh-tool-pwsh'
+  disabled: !!js process.platform !== 'win32'
+- id: tool-fs
+  name: '@deepseek-ai/dsh-tool-fs'
+- id: tool-fs-search
+  name: '@deepseek-ai/dsh-tool-fs-search'
+  config:
+    sampleOverCapGlobResults: false
+- id: tool-jobs
+  name: '@deepseek-ai/dsh-tool-jobs'
+- id: command-goal
+  name: '@deepseek-ai/dsh-command-goal'
+- id: tool-goal
+  name: '@deepseek-ai/dsh-tool-goal'
+- id: planning
+  name: cordis:group
+  group: true
+  isolate:
+    planMode: true
+  config:
+    - id: plan-mode
+      name: '@deepseek-ai/dsh-plan-mode'
+      config:
+        section: >
+          You are in plan mode. Stay in plan mode until exit_plan_mode succeeds
+          or the user switches the session mode. Imperative language to implement
+          changes means plan the implementation, not execute it. A user's
+          conversational agreement — including an answer confirming something you
+          asked — approves nothing and does not end plan mode; fold the confirmed
+          decision into the plan and submit it through exit_plan_mode.
+
+
+          Explore first. Use non-mutating reads, searches, static analysis, and
+          checks to ground the plan in the actual repository. Do not edit or write
+          files, change configuration, run formatters or code generation that
+          rewrites tracked files, commit, or otherwise carry out the plan. Prefer
+          existing functions and patterns over new machinery.
+
+
+          The tool catalog stays the same across modes for request-cache
+          stability. These plan-mode rules override any later tool description or
+          guidance that suggests using mutation tools; those tools remain listed
+          to keep the tool catalog unchanged. Do not use todo_write to track this
+          planning phase: it tracks implementation after an approved plan, while
+          the plan itself belongs in exit_plan_mode.
+
+
+          Resolve discoverable facts by inspection. Use ask_user_question only for
+          user-owned choices or material ambiguity that inspection cannot answer.
+          Do not ask the user where code lives or how current behavior works when
+          you can find out.
+
+
+          Make the plan decision-complete: state the goal and success criteria;
+          group implementation changes by subsystem; identify public API, schema,
+          and data-flow changes; cover edge cases, failure modes, tests,
+          acceptance criteria, and explicit assumptions. Keep it concise enough to
+          review but detailed enough that another engineer can implement it
+          without making design decisions.
+
+
+          When ready, call exit_plan_mode with the complete plan markdown, starting
+          with a # title. Make exit_plan_mode the only and final tool call in that
+          assistant response: it presents the plan for approval, and
+          implementation begins only in a later step after approval. Do not paste
+          the final plan as a plain reply or ask "should I proceed?" through prose
+          or ask_user_question. If review rejects it, incorporate the feedback and
+          present again. If the review channel is unavailable or aborted, stay in
+          plan mode and ask the user to switch modes manually; do not proceed with
+          implementation.
+- id: compaction
+  name: cordis:group
+  group: true
+  isolate:
+    compaction: true
+    toolResultPruner: true
+  config:
+    - id: compaction-basic
+      name: '@deepseek-ai/dsh-compaction-basic'
+    - id: command-compact
+      name: '@deepseek-ai/dsh-command-compact'
+    - id: tool-result-pruner
+      name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+      config:
+        thresholdChars: 8192
+        headChars: 4096
+        tailChars: 1024
+- id: delegation
+  name: cordis:group
+  group: true
+  isolate:
+    workflowEngine: true
+  config:
+    - id: tool-subagent-control
+      name: '@deepseek-ai/dsh-tool-subagent-control'
+    - id: tool-subagent-list-agents
+      name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
+    # 审核层载体：provider spawn = 全新上下文，父对话一句都不继承。
+    - id: tool-subagent
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: spawn
+        toolName: subagent
+        modelSelectionSettings: true
+        backgroundMode: continuable
+    # fork 继承父对话，因此**禁止**用来派审查员。
+    - id: tool-subagent-fork
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: fork
+        toolName: subagent_fork
+        backgroundMode: continuable
+    - id: tool-subagent-codex
+      name: '@deepseek-ai/dsh-tool-subagent'
+      disabled: true
+      config:
+        provider: codex
+        toolName: subagent_codex
+        backgroundMode: one-shot
+        maxDepth: provider-managed
+    - id: tool-subagent-claude-code
+      name: '@deepseek-ai/dsh-tool-subagent'
+      disabled: true
+      config:
+        provider: claude-code
+        toolName: subagent_claude_code
+        backgroundMode: one-shot
+        maxDepth: provider-managed
+    - id: workflow-ptc
+      name: '@deepseek-ai/dsh-workflow-ptc'
+      config:
+        provider: spawn
+    - id: tool-workflow
+      name: '@deepseek-ai/dsh-tool-workflow'
+    - id: tool-ralph
+      name: '@deepseek-ai/dsh-tool-ralph'
+      disabled: true
+      config:
+        subagentProvider: spawn
+        maxRounds: 64
+- id: tool-ask-user
+  name: '@deepseek-ai/dsh-tool-ask-user'
+- id: tool-todo
+  name: '@deepseek-ai/dsh-tool-todo'
+  config:
+    allowParallelInProgress: true
+- id: tool-web
+  name: '@deepseek-ai/dsh-tool-web'
+  config:
+    fetch: true
+    searchTimeoutMs: 60000
+- id: tool-cordis
+  name: '@deepseek-ai/dsh-tool-cordis'
+- id: skill-filesystem
+  name: '@deepseek-ai/dsh-skill-filesystem'
+  config:
+    customSkillDirs:
+      # ① 部署自带的插件开发参考（与「创造模式」同一份，逐字照抄）：agent-experience、
+      #    cordis-plugin-development（含 references/ 与 templates/）、editing-cordis-compositions、
+      #    cordis-composition-reference。
+      - !!js >-
+        process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:path').dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('@deepseek-ai/dsh-agent-preset/package.json')),
+        'skills')
+      # ② 本模式自己的六阶段流水线 skill（唯一入口 + 六阶段 + 审查协议 + 两个辅助）。
+      #    路径由 DSH_HOME 推导，换机器不用改。
+      - !!js >-
+        process.getBuiltinModule('node:path').join(process.env.DSH_HOME && process.env.DSH_HOME.trim() !== '' ? process.env.DSH_HOME : process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:os').homedir(), '.dsh'), 'plugin-creator', 'skills')
+- id: tool-skill
+  name: '@deepseek-ai/dsh-tool-skill'
+- id: present
+  name: '@deepseek-ai/dsh-tool-present'
+- id: tool-plugin-manager
+  name: '@deepseek-ai/dsh-plugin-manager/tools'
+  disabled: !!js '!ctx.get(''profileContext'')'

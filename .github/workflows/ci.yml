@@ -1,0 +1,36 @@
+# 这个仓库是一个 DSH agent preset（模式），不是 npm 包；CI 只保证「能被解析、能被加载」。
+#
+# 为什么没有跑 check-preset：它要读本机部署的 app.asar 来核对"行名是否真实存在"，
+# 而 CI 机器上没有 DeepSeek Harness。装好之后在本机跑 `node gates/pc.mjs check` 才是完整检查。
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  syntax-and-format:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # 格式守卫：BOM / CRLF / Tab / YAML / JSON / 脚本语法 / skill frontmatter
+      - name: 格式守卫（模式自身）
+        run: node gates/guard-format.mjs --mode-dir .
+
+      # 逐个 node --check 门禁脚本（guard 已批量做过一遍，这里再独立确认一次）
+      - name: 门禁脚本语法
+        run: |
+          Get-ChildItem gates -Filter *.mjs -Recurse | ForEach-Object {
+            node --check $_.FullName
+            if ($LASTEXITCODE -ne 0) { throw "syntax error: $($_.FullName)" }
+          }
+
+      # 交付清单必须与磁盘一致：改了任何文件都要重算一次
+      - name: 交付清单一致性
+        run: node make-manifest.mjs --check
